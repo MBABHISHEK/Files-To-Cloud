@@ -16,10 +16,6 @@ RUN apt-get update && apt-get install -y \
 # Add MongoDB extension
 RUN pecl install mongodb && docker-php-ext-enable mongodb
 
-# Add GCP SDK for Cloud Storage
-RUN curl -sS https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh | bash \
-    && apt-get update && apt-get install -y google-cloud-cli
-
 # Install PHP extensions
 RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip
 
