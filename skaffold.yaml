@@ -1,0 +1,18 @@
+apiVersion: skaffold/v2beta29
+kind: Config
+metadata:
+  name: cloudcanvas
+build:
+  artifacts:
+    - image: gcr.io/your-project/cloudcanvas-php
+      context: .
+      docker:
+        dockerfile: docker/php/Dockerfile
+    - image: gcr.io/your-project/cloudcanvas-nginx
+      context: .
+      docker:
+        dockerfile: docker/nginx/Dockerfile
+deploy:
+  kubectl:
+    manifests:
+      - kubernetes/*

@@ -1,0 +1,48 @@
+steps:
+  # Build the PHP-FPM image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "gcr.io/$PROJECT_ID/cloudcanvas-php:${SHORT_SHA}",
+        "-f",
+        "docker/php/Dockerfile",
+        ".",
+      ]
+
+  # Build the NGINX image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "gcr.io/$PROJECT_ID/cloudcanvas-nginx:${SHORT_SHA}",
+        "-f",
+        "docker/nginx/Dockerfile",
+        ".",
+      ]
+
+  # Push images to Container Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/cloudcanvas-php:${SHORT_SHA}"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/cloudcanvas-nginx:${SHORT_SHA}"]
+
+  # Deploy to Kubernetes
+  - name: "gcr.io/cloud-builders/kubectl"
+    args:
+      [
+        "set",
+        "image",
+        "deployment/cloudcanvas-app",
+        "php-fpm=gcr.io/$PROJECT_ID/cloudcanvas-php:${SHORT_SHA}",
+        "nginx=gcr.io/$PROJECT_ID/cloudcanvas-nginx:${SHORT_SHA}",
+      ]
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1-a"
+      - "CLOUDSDK_CONTAINER_CLUSTER=cloudcanvas-cluster"
+
+images:
+  - "gcr.io/$PROJECT_ID/cloudcanvas-php:${SHORT_SHA}"
+  - "gcr.io/$PROJECT_ID/cloudcanvas-nginx:${SHORT_SHA}"

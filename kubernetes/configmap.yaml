@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  db_host: "mongodb://your-mongodb-host:27017"
+  db_name: "cloudcanvas"
+  redis_host: "redis-service"
+  gcs_bucket: "your-project-id-cloudcanvas"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /var/www/public;
+        index index.php index.html;
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        location ~ \.php$ {
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+            
+            # Security headers
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-XSS-Protection "1; mode=block" always;
+            add_header X-Content-Type-Options "nosniff" always;
+        }
+
+        location ~ /\.ht {
+            deny all;
+        }
+
+        # Cache static files
+        location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # Health check endpoint
+        location = /health-check.php {
+            access_log off;
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+        }
+    }

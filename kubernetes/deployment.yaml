@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudcanvas-app
+  labels:
+    app: cloudcanvas
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: cloudcanvas
+  template:
+    metadata:
+      labels:
+        app: cloudcanvas
+    spec:
+      containers:
+        - name: php-fpm
+          image: gcr.io/your-project-id/cloudcanvas-php:latest
+          ports:
+            - containerPort: 9000
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: db_host
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: db_name
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: redis_host
+            - name: GCS_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: gcs_bucket
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/run/secret/cloud.google.com/service-account.json
+          envFrom:
+            - secretRef:
+                name: gcp-secrets
+          livenessProbe:
+            httpGet:
+              path: /health-check.php
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health-check.php
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: gcp-service-account
+              mountPath: /var/run/secret/cloud.google.com
+              readOnly: true
+        - name: nginx
+          image: gcr.io/your-project-id/cloudcanvas-nginx:latest
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /health-check.php
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+            - name: app-data
+              mountPath: /var/www
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+        - name: app-data
+          emptyDir: {}
+        - name: gcp-service-account
+          secret:
+            secretName: gcp-service-account
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
