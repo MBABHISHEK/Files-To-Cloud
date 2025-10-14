@@ -22,35 +22,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['image'])) {
     } elseif (!in_array($file['type'], ALLOWED_TYPES)) {
         $error = 'Invalid file type. Only JPG, PNG, and GIF are allowed.';
     } else {
-        $db = getMongoDB();
-        $s3 = getS3Client();
+        $db = getMySQLDB();
         
         try {
             // Generate unique filename
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
             $filename = uniqid() . '_' . $_SESSION['user_id'] . '.' . $extension;
             
-            // Upload to S3
-            $result = $s3->putObject([
-                'Bucket' => AWS_BUCKET,
-                'Key'    => $filename,
-                'Body'   => fopen($file['tmp_name'], 'rb'),
-                'ContentType' => $file['type'],
-                'ACL'    => 'public-read'
-            ]);
+            // Read file data
+            $image_data = file_get_contents($file['tmp_name']);
             
-            // Store metadata in MongoDB
-            $images = $db->images;
-            $images->insertOne([
-                'user_id' => $_SESSION['user_id'],
-                'filename' => $filename,
-                'original_name' => $file['name'],
-                's3_url' => $result['ObjectURL'],
-                'uploaded_at' => new MongoDB\BSON\UTCDateTime(),
-                'is_public' => isset($_POST['is_public']) ? true : false
-            ]);
+            // Store metadata and image data in MySQL
+            $is_public = isset($_POST['is_public']) ? 1 : 0;
+            $user_id = $_SESSION['user_id'];
+            $original_name = $file['name'];
+            $mime_type = $file['type'];
+            $file_size = $file['size'];
             
-            $success = 'Image uploaded successfully!';
+            $stmt = $db->prepare("INSERT INTO images (user_id, filename, original_name, mime_type, file_size, image_data, uploaded_at, is_public) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)");
+            $stmt->bind_param("isssisi", $user_id, $filename, $original_name, $mime_type, $file_size, $image_data, $is_public);
+            
+            if ($stmt->execute()) {
+                $success = 'Image uploaded successfully!';
+            } else {
+                $error = 'Failed to save image to database';
+            }
             
         } catch (Exception $e) {
             $error = 'Upload failed: ' . $e->getMessage();
