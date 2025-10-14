@@ -7,7 +7,7 @@ $error = '';
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $db = getMongoDB();
+    $db = getMySQLDB();
     
     if ($action === 'register') {
         $username = $_POST['username'] ?? '';
@@ -15,25 +15,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = $_POST['password'] ?? '';
         
         if ($username && $email && $password) {
-            $users = $db->users;
-            
             // Check if user exists
-            $existingUser = $users->findOne(['$or' => [
-                ['username' => $username],
-                ['email' => $email]
-            ]]);
+            $stmt = $db->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
+            $stmt->bind_param("ss", $username, $email);
+            $stmt->execute();
+            $result = $stmt->get_result();
             
-            if (!$existingUser) {
-                $result = $users->insertOne([
-                    'username' => $username,
-                    'email' => $email,
-                    'password' => password_hash($password, PASSWORD_DEFAULT),
-                    'created_at' => new MongoDB\BSON\UTCDateTime()
-                ]);
+            if ($result->num_rows === 0) {
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $db->prepare("INSERT INTO users (username, email, password, created_at) VALUES (?, ?, ?, NOW())");
+                $stmt->bind_param("sss", $username, $email, $hashed_password);
                 
-                if ($result->getInsertedId()) {
+                if ($stmt->execute()) {
                     $success = 'Registration successful! Please login.';
                     $action = 'login';
+                } else {
+                    $error = 'Registration failed. Please try again.';
                 }
             } else {
                 $error = 'Username or email already exists';
@@ -46,13 +43,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = $_POST['password'] ?? '';
         
         if ($username && $password) {
-            $users = $db->users;
-            $user = $users->findOne([
-                'username' => $username
-            ]);
+            $stmt = $db->prepare("SELECT id, username, password FROM users WHERE username = ?");
+            $stmt->bind_param("s", $username);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $user = $result->fetch_assoc();
             
             if ($user && password_verify($password, $user['password'])) {
-                $_SESSION['user_id'] = (string)$user['_id'];
+                $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
                 header('Location: /dashboard.php');
                 exit;
