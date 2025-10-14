@@ -8,39 +8,46 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-$db = getMongoDB();
-$images = $db->images;
+$db = getMySQLDB();
+$user_id = $_SESSION['user_id'];
 
 // Get user's images
-$userImages = $images->find([
-    'user_id' => $_SESSION['user_id']
-], [
-    'sort' => ['uploaded_at' => -1]
-]);
+$stmt = $db->prepare("SELECT id, filename, original_name, mime_type, file_size, uploaded_at, is_public FROM images WHERE user_id = ? ORDER BY uploaded_at DESC");
+$stmt->bindParam(1, $user_id, PDO::PARAM_INT);
+$stmt->execute();
+$userImages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get image count
+$countStmt = $db->prepare("SELECT COUNT(*) as total FROM images WHERE user_id = ?");
+$countStmt->bindParam(1, $user_id, PDO::PARAM_INT);
+$countStmt->execute();
+$imageCount = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
 
 // Handle image deletion
 if (isset($_POST['delete_image'])) {
     $imageId = $_POST['image_id'];
-    $image = $images->findOne(['_id' => new MongoDB\BSON\ObjectId($imageId)]);
     
-    if ($image && $image['user_id'] === $_SESSION['user_id']) {
-        $s3 = getS3Client();
+    // Verify the image belongs to the current user
+    $verifyStmt = $db->prepare("SELECT id FROM images WHERE id = ? AND user_id = ?");
+    $verifyStmt->bindParam(1, $imageId, PDO::PARAM_INT);
+    $verifyStmt->bindParam(2, $user_id, PDO::PARAM_INT);
+    $verifyStmt->execute();
+    $image = $verifyStmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($image) {
+        // Delete from database
+        $deleteStmt = $db->prepare("DELETE FROM images WHERE id = ? AND user_id = ?");
+        $deleteStmt->bindParam(1, $imageId, PDO::PARAM_INT);
+        $deleteStmt->bindParam(2, $user_id, PDO::PARAM_INT);
         
-        // Delete from S3
-        try {
-            $s3->deleteObject([
-                'Bucket' => AWS_BUCKET,
-                'Key'    => $image['filename']
-            ]);
-        } catch (Exception $e) {
-            error_log("S3 deletion failed: " . $e->getMessage());
+        if ($deleteStmt->execute()) {
+            header('Location: /dashboard.php');
+            exit;
+        } else {
+            $error = "Failed to delete image";
         }
-        
-        // Delete from MongoDB
-        $images->deleteOne(['_id' => new MongoDB\BSON\ObjectId($imageId)]);
-        
-        header('Location: /dashboard.php');
-        exit;
+    } else {
+        $error = "Image not found or you don't have permission to delete it";
     }
 }
 ?>
@@ -70,32 +77,64 @@ if (isset($_POST['delete_image'])) {
         <div class="dashboard-container">
             <h2>My Dashboard</h2>
             
+            <?php if (isset($error)): ?>
+                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
+            
             <div class="dashboard-stats">
                 <div class="stat-card">
                     <h3>Total Images</h3>
-                    <p class="stat-number"><?php echo iterator_count($userImages); ?></p>
+                    <p class="stat-number"><?php echo htmlspecialchars($imageCount); ?></p>
+                </div>
+                
+                <?php
+                // Get public image count
+                $publicStmt = $db->prepare("SELECT COUNT(*) as public_count FROM images WHERE user_id = ? AND is_public = 1");
+                $publicStmt->bindParam(1, $user_id, PDO::PARAM_INT);
+                $publicStmt->execute();
+                $publicCount = $publicStmt->fetch(PDO::FETCH_ASSOC)['public_count'];
+                ?>
+                <div class="stat-card">
+                    <h3>Public Images</h3>
+                    <p class="stat-number"><?php echo htmlspecialchars($publicCount); ?></p>
+                </div>
+                
+                <?php
+                // Get total storage used
+                $storageStmt = $db->prepare("SELECT SUM(file_size) as total_storage FROM images WHERE user_id = ?");
+                $storageStmt->bindParam(1, $user_id, PDO::PARAM_INT);
+                $storageStmt->execute();
+                $totalStorage = $storageStmt->fetch(PDO::FETCH_ASSOC)['total_storage'] ?? 0;
+                ?>
+                <div class="stat-card">
+                    <h3>Storage Used</h3>
+                    <p class="stat-number"><?php echo round($totalStorage / (1024 * 1024), 2); ?> MB</p>
                 </div>
             </div>
 
             <div class="user-images">
                 <h3>My Images</h3>
                 
-                <?php if (iterator_count($userImages) > 0): ?>
+                <?php if (count($userImages) > 0): ?>
                     <div class="image-grid">
                         <?php foreach ($userImages as $image): ?>
                             <div class="image-card">
-                                <img src="<?php echo htmlspecialchars($image['s3_url']); ?>" 
-                                     alt="<?php echo htmlspecialchars($image['original_name']); ?>">
+                                <img src="/image_view.php?id=<?php echo $image['id']; ?>" 
+                                     alt="<?php echo htmlspecialchars($image['original_name']); ?>"
+                                     loading="lazy">
                                 <div class="image-details">
                                     <p class="image-name"><?php echo htmlspecialchars($image['original_name']); ?></p>
                                     <p class="image-meta">
-                                        Uploaded: <?php echo date('M j, Y g:i A', $image['uploaded_at']->toDateTime()->getTimestamp()); ?>
+                                        Uploaded: <?php echo date('M j, Y g:i A', strtotime($image['uploaded_at'])); ?>
                                     </p>
-                                    <p class="image-visibility">
+                                    <p class="image-meta">
+                                        Size: <?php echo round($image['file_size'] / 1024, 1); ?> KB
+                                    </p>
+                                    <p class="image-visibility <?php echo $image['is_public'] ? 'public' : 'private'; ?>">
                                         <?php echo $image['is_public'] ? 'Public' : 'Private'; ?>
                                     </p>
                                     <form method="POST" class="delete-form">
-                                        <input type="hidden" name="image_id" value="<?php echo (string)$image['_id']; ?>">
+                                        <input type="hidden" name="image_id" value="<?php echo $image['id']; ?>">
                                         <button type="submit" name="delete_image" class="btn btn-danger" 
                                                 onclick="return confirm('Are you sure you want to delete this image?')">
                                             Delete
