@@ -1,4 +1,4 @@
-require_once 'config.php';
+<?require_once 'config.php';
 startSession();
 
 $db = getMySQLDB();
